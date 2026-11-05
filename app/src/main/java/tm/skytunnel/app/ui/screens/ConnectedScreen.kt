@@ -28,7 +28,6 @@ import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.DataUsage
 import androidx.compose.material.icons.filled.Language
-import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -52,8 +51,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import tm.skytunnel.app.data.VpnUiState
+import tm.skytunnel.app.data.formatBytes
 import tm.skytunnel.app.ui.components.CountryFlag
-import tm.skytunnel.app.ui.components.PromoBanner
 import tm.skytunnel.app.ui.components.SignalBars
 import tm.skytunnel.app.ui.components.SkyCard
 import tm.skytunnel.app.ui.components.SkyTopBar
@@ -68,7 +67,6 @@ fun ConnectedScreen(
     state: VpnUiState,
     onBack: () -> Unit,
     onDisconnect: () -> Unit,
-    onPremium: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     Column(
@@ -80,8 +78,6 @@ fun ConnectedScreen(
         SkyTopBar(
             title = "Connected",
             onBack = onBack,
-            actionIcon = Icons.Filled.MoreVert,
-            actionDescription = "More"
         )
 
         Spacer(Modifier.height(12.dp))
@@ -121,21 +117,21 @@ fun ConnectedScreen(
                     .padding(14.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                CountryFlag(state.selectedServer.countryCode, width = 48.dp, height = 34.dp)
+                CountryFlag(state.selectedServer?.countryCode.orEmpty(), width = 48.dp, height = 34.dp)
                 Spacer(Modifier.width(14.dp))
                 Column(Modifier.weight(1f)) {
                     Text(
-                        state.selectedServer.country,
+                        state.selectedServer?.country.orEmpty(),
                         style = MaterialTheme.typography.titleLarge,
                         color = MaterialTheme.colorScheme.onSurface
                     )
                     Text(
-                        state.selectedServer.city,
+                        state.selectedServer?.city.orEmpty(),
                         style = MaterialTheme.typography.bodyLarge,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
-                SignalBars(state.selectedServer.signal, active = state.isConnected)
+                SignalBars(if (state.isConnected) 4 else 0, active = state.isConnected)
             }
         }
 
@@ -165,7 +161,7 @@ fun ConnectedScreen(
                 DetailRow(
                     Icons.Filled.DataUsage,
                     "Data Used",
-                    "%.1f MB".format(state.dataUsedMb)
+                    formatBytes(state.sessionBytes)
                 )
             }
         }
@@ -189,15 +185,6 @@ fun ConnectedScreen(
             Icon(Icons.Filled.Stop, contentDescription = null, modifier = Modifier.size(18.dp))
             Spacer(Modifier.width(10.dp))
             Text("Disconnect", style = MaterialTheme.typography.titleMedium)
-        }
-
-        Spacer(Modifier.height(14.dp))
-
-        if (!state.isPremium) {
-            PromoBanner(
-                onClick = onPremium,
-                modifier = Modifier.padding(horizontal = 16.dp)
-            )
         }
 
         Spacer(Modifier.height(20.dp))

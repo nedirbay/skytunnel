@@ -1,5 +1,14 @@
 package tm.skytunnel.app.ui.navigation
 
+import android.Manifest
+import android.app.Activity
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.net.VpnService
+import android.os.Build
+import android.provider.Settings
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -18,8 +27,9 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.core.content.ContextCompat
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavHostController
@@ -27,11 +37,9 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
-import kotlinx.coroutines.launch
 import tm.skytunnel.app.ui.components.SkyBottomBar
 import tm.skytunnel.app.ui.screens.ConnectedScreen
 import tm.skytunnel.app.ui.screens.HomeScreen
-import tm.skytunnel.app.ui.screens.PremiumScreen
 import tm.skytunnel.app.ui.screens.ServersScreen
 import tm.skytunnel.app.ui.screens.SettingsScreen
 import tm.skytunnel.app.ui.screens.SplashScreen
@@ -56,7 +64,39 @@ fun SkyTunnelApp(viewModel: VpnViewModel = viewModel()) {
         val showBottomBar = route in setOf(Routes.HOME, Routes.STATS, Routes.SETTINGS)
 
         val snackbarHostState = remember { SnackbarHostState() }
-        val scope = rememberCoroutineScope()
+        val context = LocalContext.current
+
+        LaunchedEffect(Unit) {
+            viewModel.events.collect { snackbarHostState.showMessage(it) }
+        }
+
+        val vpnPermission = rememberLauncherForActivityResult(
+            ActivityResultContracts.StartActivityForResult()
+        ) { result ->
+            if (result.resultCode == Activity.RESULT_OK) viewModel.connect()
+            else viewModel.message("VPN permission is required to connect")
+        }
+        val connectWithVpnPermission = {
+            val request = VpnService.prepare(context)
+            if (request != null) vpnPermission.launch(request) else viewModel.connect()
+        }
+        // The connection works without notifications, so go on whatever the answer is.
+        val notificationPermission = rememberLauncherForActivityResult(
+            ActivityResultContracts.RequestPermission()
+        ) { connectWithVpnPermission() }
+        val requestConnect = {
+            val needsNotificationPermission =
+                Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                    ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) !=
+                    PackageManager.PERMISSION_GRANTED
+            if (state.selectedServer == null) {
+                navController.navigateToTab(Routes.SERVERS)
+            } else if (needsNotificationPermission) {
+                notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+            } else {
+                connectWithVpnPermission()
+            }
+        }
 
         // Bagly bolanda, Home-dan awtomatiki Connected sahypasyna geçmeli däl —
         // ulanyjy "Connection Details" arkaly özi geçýär.
@@ -97,35 +137,28 @@ fun SkyTunnelApp(viewModel: VpnViewModel = viewModel()) {
                 composable(Routes.HOME) {
                     HomeScreen(
                         state = state,
-                        onToggleConnection = viewModel::toggleConnection,
+                        onToggleConnection = {
+                            if (state.isConnected || state.isBusy) viewModel.disconnect()
+                            else requestConnect()
+                        },
                         onServerClick = { navController.navigateToTab(Routes.SERVERS) },
                         onDetailsClick = { navController.navigate(Routes.CONNECTED) },
-                        onPremiumClick = { navController.navigate(Routes.PREMIUM) },
                         onMenuClick = { navController.navigateToTab(Routes.SETTINGS) }
                     )
                 }
 
                 composable(Routes.SERVERS) {
                     ServersScreen(
-                        selectedId = state.selectedServer.id,
+                        servers = state.servers,
+                        selectedId = state.selectedServer?.id,
+                        isRefreshing = state.isRefreshing,
                         onSelect = { server ->
-                            if (server.isPremium && !state.isPremium) {
-                                scope.launch {
-                                    snackbarHostState.showMessage(
-                                        "${server.country} is a Premium server"
-                                    )
-                                }
-                            } else if (!server.isOnline) {
-                                scope.launch {
-                                    snackbarHostState.showMessage(
-                                        "${server.city} is offline"
-                                    )
-                                }
-                            } else {
-                                viewModel.selectServer(server)
+                            if (viewModel.selectServer(server.id)) {
                                 navController.navigateToTab(Routes.HOME)
                             }
                         },
+                        onRefresh = viewModel::refresh,
+                        onAddSubscription = viewModel::addSubscription,
                         onBack = { navController.navigateToTab(Routes.HOME) }
                     )
                 }
@@ -133,6 +166,7 @@ fun SkyTunnelApp(viewModel: VpnViewModel = viewModel()) {
                 composable(Routes.STATS) {
                     StatisticsScreen(
                         state = state,
+                        loadSummary = viewModel::statsSummary,
                         onBack = { navController.navigateToTab(Routes.HOME) }
                     )
                 }
@@ -143,14 +177,13 @@ fun SkyTunnelApp(viewModel: VpnViewModel = viewModel()) {
                         onBack = { navController.navigateToTab(Routes.HOME) },
                         onAutoConnect = viewModel::setAutoConnect,
                         onNotifications = viewModel::setNotifications,
-                        onKillSwitch = viewModel::setKillSwitch,
+                        onOpenVpnSettings = {
+                            context.startActivity(Intent(Settings.ACTION_VPN_SETTINGS))
+                        },
                         onThemeMode = viewModel::setThemeMode,
-                        onAccount = { navController.navigate(Routes.PREMIUM) },
-                        onSplitTunneling = {
-                            scope.launch {
-                                snackbarHostState.showMessage("Split Tunneling coming soon")
-                            }
-                        }
+                        onRefreshSubscription = viewModel::refresh,
+                        onRemoveSubscription = viewModel::removeSubscription,
+                        onAddSubscription = { navController.navigateToTab(Routes.SERVERS) }
                     )
                 }
 
@@ -162,32 +195,26 @@ fun SkyTunnelApp(viewModel: VpnViewModel = viewModel()) {
                             viewModel.disconnect()
                             navController.popBackStack()
                         },
-                        onPremium = { navController.navigate(Routes.PREMIUM) }
-                    )
-                }
-
-                composable(Routes.PREMIUM) {
-                    PremiumScreen(
-                        isPremium = state.isPremium,
-                        onBack = { navController.popBackStack() },
-                        onUpgrade = {
-                            viewModel.setPremium(true)
-                            scope.launch {
-                                snackbarHostState.showMessage("Premium activated")
-                            }
-                        }
                     )
                 }
             }
         }
 
+        // Android or another VPN can end the tunnel while this screen is open.
+        LaunchedEffect(route, state.status) {
+            if (route == Routes.CONNECTED && !state.isConnected) navController.popBackStack()
+        }
+
         // "Auto Connect": programma açylanda diňe bir gezek. Her Home-a gaýdanda
         // baglansa, "Disconnect" basylandan soň baglanyşyk derrew täzeden açylardy.
         var autoConnectDone by rememberSaveable { mutableStateOf(false) }
-        LaunchedEffect(route) {
-            if (route == Routes.HOME && !autoConnectDone) {
+        LaunchedEffect(route, state.settingsLoaded) {
+            if (route == Routes.HOME && state.settingsLoaded && !autoConnectDone) {
                 autoConnectDone = true
-                if (state.autoConnect) viewModel.connect()
+                // Never open the permission dialog on launch: only connect if already allowed.
+                if (state.autoConnect && state.selectedServer != null && VpnService.prepare(context) == null) {
+                    viewModel.connect()
+                }
             }
         }
     }

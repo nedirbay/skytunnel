@@ -17,7 +17,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.WorkspacePremium
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
@@ -32,11 +31,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import tm.skytunnel.app.ui.theme.Gold
 import tm.skytunnel.app.ui.theme.GreenConnected
 import tm.skytunnel.app.ui.theme.OfflineGrey
-import tm.skytunnel.app.ui.theme.PremiumChipBg
-import tm.skytunnel.app.ui.theme.PremiumChipText
 import tm.skytunnel.app.ui.theme.Violet
 
 /** Sahypalaryň ýokarsyndaky yzyna / at / sag tarapdaky hereket hatary. */
@@ -105,47 +101,24 @@ fun SkyCard(
     ) { content() }
 }
 
-/** "Active" / "Offline" nokatly bellik. */
+/** Dot and label for a delay test: null means the server has not been tested. */
 @Composable
-fun StatusDot(online: Boolean, modifier: Modifier = Modifier) {
+fun StatusDot(online: Boolean?, modifier: Modifier = Modifier) {
     Row(modifier = modifier, verticalAlignment = Alignment.CenterVertically) {
         Spacer(
             Modifier
                 .size(7.dp)
-                .background(if (online) GreenConnected else OfflineGrey, CircleShape)
+                .background(if (online == true) GreenConnected else OfflineGrey, CircleShape)
         )
         Spacer(Modifier.width(6.dp))
         Text(
-            text = if (online) "Active" else "Offline",
+            text = when (online) {
+                true -> "Active"
+                false -> "Offline"
+                null -> "Untested"
+            },
             style = MaterialTheme.typography.labelMedium,
-            color = if (online) GreenConnected else OfflineGrey
-        )
-    }
-}
-
-/** Sag ýokarky "Premium" nyşany. */
-@Composable
-fun PremiumChip(onClick: () -> Unit, modifier: Modifier = Modifier) {
-    Row(
-        modifier = modifier
-            .clip(CircleShape)
-            .background(PremiumChipBg)
-            .clickable(onClick = onClick)
-            .padding(horizontal = 12.dp, vertical = 7.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Icon(
-            Icons.Filled.WorkspacePremium,
-            contentDescription = null,
-            tint = Gold,
-            modifier = Modifier.size(17.dp)
-        )
-        Spacer(Modifier.width(6.dp))
-        Text(
-            "Premium",
-            style = MaterialTheme.typography.labelMedium,
-            fontWeight = FontWeight.SemiBold,
-            color = PremiumChipText
+            color = if (online == true) GreenConnected else OfflineGrey
         )
     }
 }

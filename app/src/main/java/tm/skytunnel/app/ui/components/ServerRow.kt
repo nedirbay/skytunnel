@@ -104,9 +104,26 @@ fun ServerRow(
                 )
             }
 
-            StatusDot(server.isOnline)
-            Spacer(Modifier.width(12.dp))
-            SignalBars(server.signal, active = server.isOnline)
+            if (server.isSupported) {
+                Column(horizontalAlignment = Alignment.End) {
+                    StatusDot(server.reachable)
+                    server.latencyMs?.let {
+                        Text(
+                            "$it ms",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+                Spacer(Modifier.width(12.dp))
+                SignalBars(server.signal, active = server.reachable == true)
+            } else {
+                Text(
+                    "Unsupported",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = OfflineGrey
+                )
+            }
         }
     }
 }

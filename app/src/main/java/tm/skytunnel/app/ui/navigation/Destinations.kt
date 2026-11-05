@@ -18,7 +18,6 @@ object Routes {
     const val STATS = "stats"
     const val SETTINGS = "settings"
     const val CONNECTED = "connected"
-    const val PREMIUM = "premium"
 }
 
 /** Aşaky nawigasiýanyň 4 bölümi. */

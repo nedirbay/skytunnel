@@ -1,109 +1,196 @@
 package tm.skytunnel.app.ui.vm
 
-import androidx.lifecycle.ViewModel
+import android.app.Application
+import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
+import libv2ray.Libv2ray
+import tm.skytunnel.app.SkyApp
+import tm.skytunnel.app.data.AppSettings
 import tm.skytunnel.app.data.Server
+import tm.skytunnel.app.data.StatsRange
+import tm.skytunnel.app.data.StatsSummary
+import tm.skytunnel.app.data.SubscriptionException
+import tm.skytunnel.app.data.SubscriptionState
 import tm.skytunnel.app.data.VpnStatus
 import tm.skytunnel.app.data.VpnUiState
+import tm.skytunnel.app.data.proxy.ServerProfile
+import tm.skytunnel.app.data.proxy.XrayConfigBuilder
 import tm.skytunnel.app.ui.theme.ThemeMode
-import kotlin.random.Random
+import tm.skytunnel.app.vpn.VpnController
+import tm.skytunnel.app.vpn.VpnRuntime
 
-/**
- * Baglanyşyk ýagdaýyny dolandyrýan ViewModel.
- *
- * Bu ýerde hakyky VPN tuneli ýok — baglanyşyk simulirlenýär, şonuň üçin
- * dizaýnlardaky ähli ýagdaýlary (disconnected / connecting / connected)
- * programmany işledip görmek bolýar.
- */
-class VpnViewModel : ViewModel() {
+/** Joins the subscription, settings and the running tunnel into one screen state. */
+class VpnViewModel(application: Application) : AndroidViewModel(application) {
 
-    private val _state = MutableStateFlow(VpnUiState())
-    val state: StateFlow<VpnUiState> = _state.asStateFlow()
+    private val app = application as SkyApp
+    private val delays = MutableStateFlow<Map<String, Int?>>(emptyMap())
+    private val refreshing = MutableStateFlow(false)
+    private val settingsFlow = app.settings.settings.map { it as AppSettings? }
 
-    private var tickerJob: Job? = null
+    private val _events = MutableSharedFlow<String>(extraBufferCapacity = 8)
+    /** One-off messages for the snackbar. */
+    val events: SharedFlow<String> = _events.asSharedFlow()
 
-    /** Güýç düwmesi: baglananda üz, üzülende bagla. */
-    fun toggleConnection() {
-        if (_state.value.isBusy) return
-        if (_state.value.isConnected) disconnect() else connect()
+    val state: StateFlow<VpnUiState> = combine(
+        app.subscriptions.state,
+        VpnController.runtime,
+        settingsFlow,
+        delays,
+        refreshing
+    ) { subscription, runtime, settings, delayMap, isRefreshing ->
+        buildState(subscription, runtime, settings, delayMap, isRefreshing)
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, VpnUiState())
+
+    init {
+        viewModelScope.launch {
+            VpnController.runtime
+                .map { it.error }
+                .distinctUntilChanged()
+                .collect { error -> if (error != null) _events.tryEmit(error) }
+        }
     }
 
-    fun connect() {
-        if (_state.value.isConnected || _state.value.isBusy) return
-        tickerJob?.cancel()
-        _state.update { it.copy(status = VpnStatus.CONNECTING) }
+    private fun buildState(
+        subscription: SubscriptionState,
+        runtime: VpnRuntime,
+        settings: AppSettings?,
+        delayMap: Map<String, Int?>,
+        isRefreshing: Boolean
+    ): VpnUiState {
+        val servers = subscription.profiles.map { profile ->
+            val tested = delayMap.containsKey(profile.id)
+            val latency = delayMap[profile.id]
+            Server.from(profile, latency, if (tested) latency != null else null)
+        }
+        return VpnUiState(
+            status = runtime.status,
+            servers = servers,
+            selectedServer = servers.firstOrNull { it.id == subscription.selectedId },
+            subscriptionTitle = subscription.title,
+            hasSubscriptionUrl = subscription.url.isNotEmpty(),
+            usage = subscription.usage,
+            isRefreshing = isRefreshing,
+            elapsedSeconds = runtime.elapsedSeconds,
+            downloadMbps = runtime.downloadMbps,
+            uploadMbps = runtime.uploadMbps,
+            sessionBytes = runtime.sessionBytes,
+            ipAddress = runtime.exitIp ?: "—",
+            settingsLoaded = settings != null,
+            autoConnect = settings?.autoConnect ?: true,
+            notifications = settings?.notifications ?: true,
+            themeMode = settings?.themeMode ?: ThemeMode.SYSTEM
+        )
+    }
 
-        tickerJob = viewModelScope.launch {
-            delay(1500)                       // "handshake" simulýasiýasy
-            _state.update {
-                it.copy(
-                    status = VpnStatus.CONNECTED,
-                    elapsedSeconds = 0L,
-                    ipAddress = randomIp(),
-                    dataUsedMb = 0.0,
-                    downloadMbps = 24.5,
-                    uploadMbps = 18.7
-                )
+    /** Call only after the VPN permission has been granted. */
+    fun connect() {
+        val selected = app.subscriptions.state.value.selected
+        when {
+            selected == null -> message("Add a subscription and choose a server first")
+            !selected.isSupported -> message("${selected.protocolLabel} is not supported yet")
+            else -> VpnController.start(app)
+        }
+    }
+
+    fun disconnect() = VpnController.stop(app)
+
+    fun message(text: String) {
+        _events.tryEmit(text)
+    }
+
+    /** Selects a server, and moves the tunnel to it if one is running. */
+    fun selectServer(id: String): Boolean {
+        val profile = app.subscriptions.state.value.profiles.firstOrNull { it.id == id } ?: return false
+        if (!profile.isSupported) {
+            message("${profile.protocolLabel} is not supported yet")
+            return false
+        }
+        app.subscriptions.select(id)
+        val status = VpnController.runtime.value.status
+        if (status == VpnStatus.CONNECTED || status == VpnStatus.CONNECTING) VpnController.start(app)
+        return true
+    }
+
+    fun addSubscription(input: String) = runRefresh { app.subscriptions.add(input) }
+
+    /** Re-downloads the subscription if it has a link, then tests every server. */
+    fun refresh() = runRefresh {
+        if (app.subscriptions.state.value.url.isNotEmpty()) app.subscriptions.refresh()
+    }
+
+    private fun runRefresh(load: suspend () -> Unit) {
+        if (refreshing.value) return
+        refreshing.value = true
+        viewModelScope.launch {
+            try {
+                load()
+            } catch (e: SubscriptionException) {
+                message(e.message.orEmpty())
             }
-            while (true) {                    // sekuntlaýyn hasaplaýjy
-                delay(1000)
-                _state.update { s ->
-                    s.copy(
-                        elapsedSeconds = s.elapsedSeconds + 1,
-                        dataUsedMb = s.dataUsedMb + Random.nextDouble(0.2, 0.9),
-                        downloadMbps = jitter(24.5),
-                        uploadMbps = jitter(18.7)
-                    )
+            testServers()
+            refreshing.value = false
+        }
+    }
+
+    fun removeSubscription() {
+        if (VpnController.runtime.value.status != VpnStatus.DISCONNECTED) disconnect()
+        app.subscriptions.remove()
+        delays.value = emptyMap()
+    }
+
+    private suspend fun testServers() {
+        val profiles = app.subscriptions.state.value.profiles.filter { it.isSupported }
+        val limit = Semaphore(MAX_PARALLEL_TESTS)
+        kotlinx.coroutines.withContext(Dispatchers.IO) {
+            profiles.map { profile ->
+                launch {
+                    limit.withPermit {
+                        val result = measure(profile)
+                        delays.value = delays.value + (profile.id to result)
+                    }
                 }
             }
         }
     }
 
-    fun disconnect() {
-        tickerJob?.cancel()
-        tickerJob = null
-        _state.update {
-            it.copy(
-                status = VpnStatus.DISCONNECTED,
-                elapsedSeconds = 0L,
-                downloadMbps = 0.0,
-                uploadMbps = 0.0,
-                ipAddress = "—"
-            )
-        }
+    private fun measure(profile: ServerProfile): Int? = try {
+        Libv2ray.measureOutboundDelay(XrayConfigBuilder.build(profile), PROBE_URL)
+            .takeIf { it >= 0 }
+            ?.toInt()
+    } catch (_: Exception) {
+        null
     }
 
-    /** Serwer çalşylanda, eger bagly bolsa, täze serwere gaýtadan baglanýar. */
-    fun selectServer(server: Server) {
-        val wasActive = _state.value.isConnected || _state.value.isBusy
-        _state.update { it.copy(selectedServer = server) }
-        if (wasActive) {
-            disconnect()
-            connect()
-        }
+    fun statsSummary(range: StatsRange): StatsSummary = app.traffic.summary(range)
+
+    fun setAutoConnect(value: Boolean) {
+        viewModelScope.launch { app.settings.setAutoConnect(value) }
     }
 
-    fun setAutoConnect(value: Boolean) = _state.update { it.copy(autoConnect = value) }
-    fun setNotifications(value: Boolean) = _state.update { it.copy(notifications = value) }
-    fun setKillSwitch(value: Boolean) = _state.update { it.copy(killSwitch = value) }
-    fun setThemeMode(mode: ThemeMode) = _state.update { it.copy(themeMode = mode) }
-    fun setPremium(value: Boolean) = _state.update { it.copy(isPremium = value) }
-
-    override fun onCleared() {
-        tickerJob?.cancel()
-        super.onCleared()
+    fun setNotifications(value: Boolean) {
+        viewModelScope.launch { app.settings.setNotifications(value) }
     }
 
-    private fun jitter(base: Double) =
-        (base + Random.nextDouble(-2.5, 2.5)).coerceAtLeast(1.0)
+    fun setThemeMode(mode: ThemeMode) {
+        viewModelScope.launch { app.settings.setThemeMode(mode) }
+    }
 
-    private fun randomIp() =
-        "185.199.${Random.nextInt(100, 200)}.${Random.nextInt(2, 250)}"
+    private companion object {
+        const val MAX_PARALLEL_TESTS = 5
+        const val PROBE_URL = "https://www.gstatic.com/generate_204"
+    }
 }

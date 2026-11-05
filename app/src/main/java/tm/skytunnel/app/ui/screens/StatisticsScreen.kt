@@ -41,7 +41,9 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import tm.skytunnel.app.data.StatsRange
-import tm.skytunnel.app.data.StatsRepository
+import tm.skytunnel.app.data.StatsSummary
+import tm.skytunnel.app.data.formatBytes
+import kotlinx.coroutines.delay
 import tm.skytunnel.app.data.VpnUiState
 import tm.skytunnel.app.ui.components.SkyCard
 import tm.skytunnel.app.ui.components.SkyTopBar
@@ -53,14 +55,20 @@ import tm.skytunnel.app.ui.theme.Violet
 @Composable
 fun StatisticsScreen(
     state: VpnUiState,
+    loadSummary: (StatsRange) -> StatsSummary,
     onBack: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     var range by remember { mutableStateOf(StatsRange.TODAY) }
-    val summary = remember(range) { StatsRepository.summaryFor(range) }
-    var selected by remember { mutableIntStateOf(summary.peakIndex) }
+    var summary by remember(range) { mutableStateOf(loadSummary(range)) }
+    var selected by remember(range) { mutableIntStateOf(summary.peakIndex) }
 
-    LaunchedEffect(range) { selected = summary.peakIndex }
+    LaunchedEffect(range) {
+        while (true) {
+            delay(5_000)
+            summary = loadSummary(range)
+        }
+    }
 
     Column(
         modifier
@@ -107,12 +115,21 @@ fun StatisticsScreen(
                 .padding(horizontal = 16.dp)
                 .height(170.dp)
         ) {
-            Box(Modifier.padding(10.dp)) {
-                SpeedChart(
-                    points = summary.points,
-                    selectedIndex = selected,
-                    onSelect = { selected = it }
-                )
+            Box(Modifier.fillMaxSize().padding(10.dp), contentAlignment = Alignment.Center) {
+                if (summary.isEmpty) {
+                    Text(
+                        "No traffic in this period yet",
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.Center
+                    )
+                } else {
+                    SpeedChart(
+                        points = summary.points,
+                        selectedIndex = selected,
+                        onSelect = { selected = it }
+                    )
+                }
             }
         }
 
@@ -128,14 +145,14 @@ fun StatisticsScreen(
             TotalCard(
                 icon = Icons.Filled.ArrowDownward,
                 label = "Total Download",
-                value = summary.totalDownload,
+                value = formatBytes(summary.downBytes),
                 accent = Violet,
                 modifier = Modifier.weight(1f)
             )
             TotalCard(
                 icon = Icons.Filled.ArrowUpward,
                 label = "Total Upload",
-                value = summary.totalUpload,
+                value = formatBytes(summary.upBytes),
                 accent = Violet,
                 modifier = Modifier.weight(1f)
             )

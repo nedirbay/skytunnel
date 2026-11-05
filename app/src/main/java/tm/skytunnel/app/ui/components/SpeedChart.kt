@@ -25,6 +25,7 @@ import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import tm.skytunnel.app.ui.theme.Violet
+import kotlin.math.ceil
 import kotlin.math.roundToInt
 
 /**
@@ -54,7 +55,7 @@ fun SpeedChart(
         label = "sel"
     )
 
-    val maxY = 30f
+    val maxY = niceCeiling(points.maxOrNull() ?: 0f)
     val leftPad = with(density) { 26.dp.toPx() }
     val topPad = with(density) { 26.dp.toPx() }
     val bottomPad = with(density) { 10.dp.toPx() }
@@ -81,7 +82,7 @@ fun SpeedChart(
 
         // --- Tor çyzyklary we Y belgileri ---
         val dash = PathEffect.dashPathEffect(floatArrayOf(6f, 8f), 0f)
-        listOf(0f, 10f, 20f, 30f).forEach { v ->
+        listOf(0f, maxY / 3, maxY * 2 / 3, maxY).forEach { v ->
             val y = py(v)
             drawLine(
                 color = gridColor,
@@ -90,7 +91,7 @@ fun SpeedChart(
                 strokeWidth = 1f,
                 pathEffect = dash
             )
-            drawYLabel(measurer, v.toInt().toString(), leftPad, y, labelColor)
+            drawYLabel(measurer, if (maxY < 3f) "%.1f".format(v) else v.toInt().toString(), leftPad, y, labelColor)
         }
 
         // --- Ýumşadylan çyzyk ---
@@ -133,6 +134,13 @@ fun SpeedChart(
         // --- Çykgyt ---
         drawTooltip(measurer, "%.1f Mbps".format(value), mx, my, tooltipBg, size.width)
     }
+}
+
+/** Rounds up to a multiple of 3 so the three axis steps stay readable. */
+internal fun niceCeiling(max: Float): Float = when {
+    max <= 0f -> 3f
+    max < 3f -> ceil(max * 10f) / 10f
+    else -> ceil(max / 3f) * 3f
 }
 
 private fun DrawScope.drawYLabel(

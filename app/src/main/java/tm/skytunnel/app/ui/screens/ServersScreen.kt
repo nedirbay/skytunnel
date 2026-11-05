@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -27,9 +28,11 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
@@ -37,8 +40,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -49,10 +52,8 @@ import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
-import kotlinx.coroutines.delay
 import tm.skytunnel.app.data.Region
 import tm.skytunnel.app.data.Server
-import tm.skytunnel.app.data.ServerRepository
 import tm.skytunnel.app.ui.components.FilterChipPill
 import tm.skytunnel.app.ui.components.ServerRow
 import tm.skytunnel.app.ui.components.SkyTopBar
@@ -61,24 +62,22 @@ import tm.skytunnel.app.ui.theme.Violet
 /** 03_Servers_Screen */
 @Composable
 fun ServersScreen(
-    selectedId: String,
+    servers: List<Server>,
+    selectedId: String?,
+    isRefreshing: Boolean,
     onSelect: (Server) -> Unit,
+    onRefresh: () -> Unit,
+    onAddSubscription: (String) -> Unit,
     onBack: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     var region by remember { mutableStateOf<Region?>(null) }
     var query by remember { mutableStateOf("") }
     var searchOpen by remember { mutableStateOf(false) }
-    var refreshing by remember { mutableStateOf(false) }
+    var addDialog by remember { mutableStateOf(false) }
+    val refreshing = isRefreshing
 
-    LaunchedEffect(refreshing) {
-        if (refreshing) {
-            delay(1200)
-            refreshing = false
-        }
-    }
-
-    val all = ServerRepository.servers
+    val all = servers
     val visible = all
         .filter { region == null || it.region == region }
         .filter {
@@ -138,12 +137,20 @@ fun ServersScreen(
                 onClick = { region = null }
             )
             Region.entries.forEach { r ->
-                FilterChipPill(
-                    label = "${r.label} (${ServerRepository.count(r)})",
-                    selected = region == r,
-                    onClick = { region = r }
-                )
+                val count = all.count { it.region == r }
+                if (count > 0) {
+                    FilterChipPill(
+                        label = "${r.label} ($count)",
+                        selected = region == r,
+                        onClick = { region = r }
+                    )
+                }
             }
+            FilterChipPill(
+                label = "+ Add",
+                selected = false,
+                onClick = { addDialog = true }
+            )
         }
 
         // --- Sanaw ---
@@ -155,7 +162,8 @@ fun ServersScreen(
                     verticalArrangement = Arrangement.Center
                 ) {
                     Text(
-                        "No servers match your search",
+                        if (all.isEmpty()) "Add your subscription link to see servers"
+                        else "No servers match your search",
                         style = MaterialTheme.typography.titleMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -189,7 +197,7 @@ fun ServersScreen(
         )
 
         Button(
-            onClick = { refreshing = true },
+            onClick = { if (all.isEmpty()) addDialog = true else onRefresh() },
             enabled = !refreshing,
             shape = RoundedCornerShape(16.dp),
             colors = ButtonDefaults.buttonColors(
@@ -200,11 +208,12 @@ fun ServersScreen(
             ),
             modifier = Modifier
                 .fillMaxWidth()
+                .navigationBarsPadding()
                 .padding(horizontal = 16.dp, vertical = 12.dp)
                 .height(52.dp)
         ) {
             Icon(
-                Icons.Filled.Refresh,
+                if (all.isEmpty()) Icons.Filled.Add else Icons.Filled.Refresh,
                 contentDescription = null,
                 modifier = Modifier
                     .size(20.dp)
@@ -212,9 +221,47 @@ fun ServersScreen(
             )
             Spacer(Modifier.width(10.dp))
             Text(
-                if (refreshing) "Refreshing..." else "Refresh",
+                when {
+                    refreshing -> "Refreshing..."
+                    all.isEmpty() -> "Add subscription"
+                    else -> "Refresh"
+                },
                 style = MaterialTheme.typography.titleMedium
             )
         }
     }
+
+    if (addDialog) {
+        AddSubscriptionDialog(
+            onDismiss = { addDialog = false },
+            onAdd = {
+                addDialog = false
+                onAddSubscription(it)
+            }
+        )
+    }
+}
+
+@Composable
+private fun AddSubscriptionDialog(onDismiss: () -> Unit, onAdd: (String) -> Unit) {
+    var text by remember { mutableStateOf("") }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Add subscription") },
+        text = {
+            OutlinedTextField(
+                value = text,
+                onValueChange = { text = it },
+                label = { Text("https:// or vless:// link") },
+                maxLines = 4,
+                modifier = Modifier.fillMaxWidth()
+            )
+        },
+        confirmButton = {
+            TextButton(onClick = { onAdd(text) }, enabled = text.isNotBlank()) { Text("Add") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        }
+    )
 }

@@ -60,6 +60,7 @@ fun PowerButton(
             VpnStatus.CONNECTED -> GreenConnected
             VpnStatus.CONNECTING -> Violet
             VpnStatus.DISCONNECTED -> OfflineGrey
+            VpnStatus.ERROR -> MaterialTheme.colorScheme.error
         },
         animationSpec = tween(400),
         label = "accent"
@@ -173,7 +174,7 @@ fun PowerButton(
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Icon(
                     Icons.Filled.PowerSettingsNew,
-                    contentDescription = if (connected) "Disconnect" else "Connect",
+                    contentDescription = if (connected || connecting) "Disconnect" else "Connect",
                     tint = accent,
                     modifier = Modifier.size(62.dp)
                 )

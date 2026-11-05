@@ -1,3 +1,13 @@
 <resources>
     <string name="app_name">SkyTunnel</string>
+    <string name="channel_status">VPN status</string>
+    <string name="channel_alerts">Connection alerts</string>
+    <string name="vpn_connecting">Connecting…</string>
+    <string name="vpn_connected_to">Connected to %1$s</string>
+    <string name="vpn_disconnect">Disconnect</string>
+    <string name="vpn_revoked">VPN was turned off because another VPN took over or permission was removed</string>
+    <string name="vpn_no_server">Add a subscription and choose a server first</string>
+    <string name="vpn_permission_needed">VPN permission is required</string>
+    <string name="vpn_server_unreachable">%1$s is not responding</string>
+    <string name="vpn_start_failed">Could not start the connection. Check the server settings.</string>
 </resources>

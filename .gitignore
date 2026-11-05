@@ -24,6 +24,9 @@ captures/
 *.dex
 *.class
 
+# Downloaded by the downloadXrayAar Gradle task
+app/libs/
+
 # Logs
 *.log
 

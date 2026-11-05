@@ -18,7 +18,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
-import androidx.compose.material.icons.automirrored.filled.AltRoute
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.Https
 import androidx.compose.material.icons.filled.Info
@@ -45,7 +44,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
+import tm.skytunnel.app.BuildConfig
 import tm.skytunnel.app.data.VpnUiState
+import tm.skytunnel.app.data.formatBytes
+import java.time.Instant
+import java.time.ZoneId
 import tm.skytunnel.app.ui.components.SkyCard
 import tm.skytunnel.app.ui.components.SkyTopBar
 import tm.skytunnel.app.ui.theme.OfflineGrey
@@ -59,13 +62,16 @@ fun SettingsScreen(
     onBack: () -> Unit,
     onAutoConnect: (Boolean) -> Unit,
     onNotifications: (Boolean) -> Unit,
-    onKillSwitch: (Boolean) -> Unit,
+    onOpenVpnSettings: () -> Unit,
     onThemeMode: (ThemeMode) -> Unit,
-    onAccount: () -> Unit,
-    onSplitTunneling: () -> Unit,
+    onRefreshSubscription: () -> Unit,
+    onRemoveSubscription: () -> Unit,
+    onAddSubscription: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     var themeDialog by remember { mutableStateOf(false) }
+    var accountDialog by remember { mutableStateOf(false) }
+    var aboutDialog by remember { mutableStateOf(false) }
 
     Column(
         modifier
@@ -86,8 +92,10 @@ fun SettingsScreen(
                 NavRow(
                     icon = Icons.Filled.Person,
                     title = "Account",
-                    value = if (state.isPremium) "Premium" else "Free Plan",
-                    onClick = onAccount
+                    value = state.subscriptionTitle.ifEmpty { "None" },
+                    onClick = {
+                        if (state.servers.isEmpty()) onAddSubscription() else accountDialog = true
+                    }
                 )
                 RowDivider()
                 ToggleRow(
@@ -95,13 +103,6 @@ fun SettingsScreen(
                     title = "Auto Connect",
                     checked = state.autoConnect,
                     onChange = onAutoConnect
-                )
-                RowDivider()
-                NavRow(
-                    icon = Icons.AutoMirrored.Filled.AltRoute,
-                    title = "Split Tunneling",
-                    value = null,
-                    onClick = onSplitTunneling
                 )
                 RowDivider()
                 ToggleRow(
@@ -132,31 +133,88 @@ fun SettingsScreen(
                 .padding(horizontal = 16.dp)
         ) {
             Column {
-                ToggleRow(
+                NavRow(
                     icon = Icons.Filled.Shield,
                     title = "Kill Switch",
-                    subtitle = "Block traffic if the VPN drops",
-                    checked = state.killSwitch,
-                    onChange = onKillSwitch
+                    subtitle = "Turn on Always-on VPN and Block connections in Android settings",
+                    value = null,
+                    onClick = onOpenVpnSettings
                 )
                 RowDivider()
                 NavRow(
                     icon = Icons.Filled.Https,
                     title = "Protocol",
-                    value = "WireGuard",
-                    onClick = {}
+                    value = state.selectedServer?.protocolLabel ?: "—",
+                    onClick = null
                 )
                 RowDivider()
                 NavRow(
                     icon = Icons.Filled.Info,
                     title = "About",
-                    value = "v1.0",
-                    onClick = {}
+                    value = "v${BuildConfig.VERSION_NAME}",
+                    onClick = { aboutDialog = true }
                 )
             }
         }
 
         Spacer(Modifier.height(28.dp))
+    }
+
+    if (accountDialog) {
+        AlertDialog(
+            onDismissRequest = { accountDialog = false },
+            title = { Text(state.subscriptionTitle) },
+            text = {
+                Column {
+                    Text("${state.servers.size} servers")
+                    state.usage?.let { usage ->
+                        Text(
+                            if (usage.totalBytes > 0) {
+                                "Used ${formatBytes(usage.usedBytes)} of ${formatBytes(usage.totalBytes)}"
+                            } else {
+                                "Used ${formatBytes(usage.usedBytes)}"
+                            }
+                        )
+                        if (usage.expiresAtEpochSeconds > 0) {
+                            Text(
+                                "Expires " + Instant.ofEpochSecond(usage.expiresAtEpochSeconds)
+                                    .atZone(ZoneId.systemDefault()).toLocalDate()
+                            )
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                if (state.hasSubscriptionUrl) {
+                    TextButton(onClick = {
+                        accountDialog = false
+                        onRefreshSubscription()
+                    }) { Text("Refresh") }
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    accountDialog = false
+                    onRemoveSubscription()
+                }) { Text("Remove") }
+            }
+        )
+    }
+
+    if (aboutDialog) {
+        AlertDialog(
+            onDismissRequest = { aboutDialog = false },
+            title = { Text("SkyTunnel") },
+            text = {
+                Text(
+                    "Version ${BuildConfig.VERSION_NAME}\n\n" +
+                        "Uses Xray-core (MPL-2.0) through AndroidLibXrayLite (LGPL-3.0)."
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { aboutDialog = false }) { Text("Close") }
+            }
+        )
     }
 
     if (themeDialog) {
@@ -210,22 +268,31 @@ private fun NavRow(
     icon: ImageVector,
     title: String,
     value: String?,
-    onClick: () -> Unit
+    onClick: (() -> Unit)?,
+    subtitle: String? = null
 ) {
     Row(
         Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
+            .clickable(enabled = onClick != null) { onClick?.invoke() }
             .padding(horizontal = 16.dp, vertical = 15.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         SettingIcon(icon)
-        Text(
-            title,
-            style = MaterialTheme.typography.bodyLarge,
-            color = MaterialTheme.colorScheme.onSurface,
-            modifier = Modifier.weight(1f)
-        )
+        Column(Modifier.weight(1f)) {
+            Text(
+                title,
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            if (subtitle != null) {
+                Text(
+                    subtitle,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
         if (value != null) {
             Text(
                 value,
@@ -234,12 +301,14 @@ private fun NavRow(
             )
             Spacer(Modifier.width(4.dp))
         }
-        Icon(
-            Icons.AutoMirrored.Filled.KeyboardArrowRight,
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.size(20.dp)
-        )
+        if (onClick != null) {
+            Icon(
+                Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(20.dp)
+            )
+        }
     }
 }
 

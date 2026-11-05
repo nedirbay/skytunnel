@@ -32,11 +32,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import tm.skytunnel.app.data.Server
+import tm.skytunnel.app.data.VpnStatus
 import tm.skytunnel.app.data.VpnUiState
 import tm.skytunnel.app.ui.components.CountryFlag
 import tm.skytunnel.app.ui.components.MetricBlock
 import tm.skytunnel.app.ui.components.PowerButton
-import tm.skytunnel.app.ui.components.PremiumChip
 import tm.skytunnel.app.ui.components.SignalBars
 import tm.skytunnel.app.ui.components.SkyCard
 import tm.skytunnel.app.ui.components.VerticalDivider
@@ -50,7 +50,6 @@ fun HomeScreen(
     onToggleConnection: () -> Unit,
     onServerClick: () -> Unit,
     onDetailsClick: () -> Unit,
-    onPremiumClick: () -> Unit,
     onMenuClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -81,10 +80,6 @@ fun HomeScreen(
                         contentDescription = "Menu",
                         tint = MaterialTheme.colorScheme.onBackground
                     )
-                }
-                Spacer(Modifier.weight(1f))
-                if (!state.isPremium) {
-                    PremiumChip(onClick = onPremiumClick)
                 }
             }
 
@@ -123,6 +118,7 @@ fun HomeScreen(
                 when {
                     state.isConnected -> state.timerText
                     state.isBusy -> "Please wait"
+                    state.status == VpnStatus.ERROR -> "Tap to retry"
                     else -> "Tap to connect"
                 },
                 style = MaterialTheme.typography.titleMedium,
@@ -213,7 +209,7 @@ fun HomeScreen(
 
 @Composable
 private fun SelectedServerCard(
-    server: Server,
+    server: Server?,
     connected: Boolean,
     onClick: () -> Unit
 ) {
@@ -225,21 +221,21 @@ private fun SelectedServerCard(
                 .padding(horizontal = 14.dp, vertical = 14.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            CountryFlag(server.countryCode, width = 48.dp, height = 34.dp)
+            CountryFlag(server?.countryCode.orEmpty(), width = 48.dp, height = 34.dp)
             Spacer(Modifier.width(14.dp))
             Column(Modifier.weight(1f)) {
                 Text(
-                    server.country,
+                    server?.country ?: "No server",
                     style = MaterialTheme.typography.titleLarge,
                     color = MaterialTheme.colorScheme.onSurface
                 )
                 Text(
-                    server.city,
+                    server?.city ?: "Tap to add a subscription",
                     style = MaterialTheme.typography.bodyLarge,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
-            SignalBars(server.signal, active = connected)
+            if (server != null) SignalBars(if (connected) 4 else server.signal, active = connected)
         }
     }
 }
